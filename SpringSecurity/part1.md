@@ -1,29 +1,52 @@
-# Spring Security: Simple Notes
+# Spring Security: Notes
 
-## What it is
-- A framework that adds a security layer in front of a Spring app.
-- Works as a chain of filters handling: authentication, authorization, password security, session management, JWT support, and protection against common attacks (e.g. CSRF).
+## 1. What is Spring Security?
+A framework that puts a security layer in front of your Spring application. It works as a **chain of filters** that every request passes through *before* reaching your controller.
 
-## Authentication vs Authorization
+It handles:
+- Authentication (who are you?)
+- Authorization (what can you do?)
+- Password encoding
+- Session management
+- JWT / token support
+- Protection against common attacks (CSRF, session fixation, etc.)
+
+---
+
+## 2. Authentication vs Authorization
+
 | | Authentication | Authorization |
 |---|---|---|
-| Question | Who are you? - Authentication is the process of verifying the identity of a user. | What are you allowed to do? |
-| Checks | Username/password, OTP, token | Roles/permissions (USER, MANAGER, ADMIN) |
-| Happens | First | After authentication |
-| Failure | 401 Unauthorized | 403 Forbidden |
+| **Question** | Who are you? | What are you allowed to do? |
+| **Purpose** | Verify the identity of a user | Check the permissions of a verified user |
+| **Based on** | Username/password, OTP, token | Roles / permissions (USER, MANAGER, ADMIN) |
+| **Order** | Happens first | Happens after authentication |
+| **Failure** | `401 Unauthorized` | `403 Forbidden` |
 
-- Example roles: USER = view orders; MANAGER = view + update; ADMIN = view + update + delete.
-- Being logged in does NOT mean you can access everything.
+**Example roles**
+- `USER`: view orders
+- `MANAGER`: view + update orders
+- `ADMIN`: view + update + delete orders
 
-## 401 vs 403
-- **401**: no valid authentication (no login, wrong password, invalid/expired token). "Who are you?"
-- **403**: authenticated but not permitted (e.g. ROLE_USER trying DELETE that needs ADMIN). "I know you, but you can't do this."
+> Being logged in does **not** mean you can access everything.
 
-## Vulnerability
-- A weakness an attacker can exploit (access/modify data, bypass checks, steal info).
-- Example: `GET /users/{id}` only checks that you're logged in, not that user `id` is you. Anyone could read other users' data.
+### 401 vs 403
+- **401 Unauthorized**: no valid authentication (not logged in, wrong password, invalid/expired token). *"Who are you?"*
+- **403 Forbidden**: authenticated, but not permitted (e.g. a `ROLE_USER` calling a `DELETE` endpoint that needs `ADMIN`). *"I know you, but you can't do this."*
 
-## Add Spring Security
+---
+
+## 3. What is a vulnerability?
+A weakness an attacker can exploit to access or modify data, bypass checks, or steal information.
+
+**Example (broken access control):**
+`GET /users/{id}` only checks that you are logged in, but not that `{id}` belongs to you. Any logged-in user can read other users' data.
+
+---
+
+## 4. Adding Spring Security
+
+**Maven**
 ```xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
@@ -31,46 +54,77 @@
 </dependency>
 ```
 
-If you run your application, in your run console you can see this application generates a default password and the username by default is ‘user’.
-<img width="1247" height="119" alt="image" src="https://github.com/user-attachments/assets/7dcc6dee-ac8e-4711-ae62-9e30ce744608" />
+**Gradle**
+```groovy
+implementation 'org.springframework.boot:spring-boot-starter-security'
+```
 
-<img width="496" height="317" alt="image" src="https://github.com/user-attachments/assets/87259901-69a0-4e36-9e13-482096b89957" />
+---
 
-If you put in the wrong username or password you will get a “Bad Credentials” error in your browser.
+## 5. A Simple Example
 
+### Without Spring Security
+```java
+@RestController
+@RequestMapping("/user")
+public class UserController {
 
+    @GetMapping("/get")
+    public String getUser() {
+        return "User data";
+    }
+}
+```
 
-## Internal working (request flow)
-1. **SecurityFilterAutoConfiguration**: auto-registers the `DelegatingFilterProxy` as `springSecurityFilterChain`.
-2. **DelegatingFilterProxy**: intercepts incoming HTTP requests, hands them to FilterChainProxy.
-3. **FilterChainProxy**: decides which security filters apply to the current request.
-4. **SecurityFilterChain**: the ordered list of filters (authentication, authorization, etc.) that run.
+`GET http://localhost:8080/user/get` returns:
+```
+User data
+```
 
-Mall analogy: DelegatingFilterProxy = main gate, filters = checkpoints, VIP lounge = restricted resources.
+### After adding the dependency
+No config, no login controller, no users created, yet the endpoint is now protected. Spring Boot auto-configures:
+- A default login mechanism (form login and HTTP Basic) <img width="1100" height="282" alt="image" src="https://github.com/user-attachments/assets/28e2a8c0-7c33-42da-9fc7-664934aa6785" />
 
-<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/0b7d709b-d479-41f3-af5a-5c81a48cb27d" />
+- A default user named `user`
+- A random password, **regenerated on every application start**, printed in the logs: <img width="568" height="160" alt="image" src="https://github.com/user-attachments/assets/91b01494-fba7-4e93-99de-b1b3703bc2a9" />
 
+  ```
+  Using generated security password: <random-uuid>
+  ```
 
-## Default behavior
-- **Authentication**: form login with a basic login page; HTTP Basic for REST APIs.
-- **User**: in-memory user `user` with a generated password (shown in console on startup).
-- **Authorization**: all requests secured; only login, logout, error pages open.
-- **CSRF**: enabled for state-changing requests (hidden `_csrf` token in login form).
-- **Sessions**: session fixation protection; cookie `JSESSIONID` until logout.
-- **Passwords**: encoded with BCrypt.
-- **Logout**: `/logout` invalidates session and redirects to login.
-- **Access denied**: 403 error or access-denied page.
+After logging in with `user` and that password, `GET /user/get` returns `User data` again.
 
-## Trying the defaults
-1. Create a Maven/Spring Boot app with `spring-boot-starter-security`.
-2. Run it and copy the generated password from the console (username: `user`).
-3. Open any GET endpoint in the browser; a sign-in form appears.
-4. Wrong credentials give "Bad credentials".
-5. After login, a `JSESSIONID` cookie is set (DevTools > Application > Cookies).
-6. Visit `/logout` and confirm to end the session.
-
-## Custom username/password (application.properties)
+### Override the default credentials
+In `application.properties`:
 ```properties
 spring.security.user.name=<name>
 spring.security.user.password=<password>
 ```
+> Fine for learning and testing. For real apps, use a proper `UserDetailsService` with a database and encoded passwords.
+
+---
+
+## 6. What just happened?
+The request no longer goes straight to the controller. It passes through the **Security Filter Chain** first:
+
+```
+Client
+  ↓  GET /user/get
+Spring Security Filter Chain
+  ↓  Authentication  (who are you?)
+  ↓  Authorization   (are you allowed?)
+UserController
+  ↓
+"User data"
+```
+
+**Key idea:** Spring Security acts *before* the request reaches your controller. If authentication or authorization fails, the controller is never called.
+
+---
+
+## Quick recap
+1. Add `spring-boot-starter-security` → all endpoints are secured by default.
+2. Authentication comes first (401 on failure), authorization second (403 on failure).
+3. Default user is `user`, with a new random password each startup (see logs).
+4. Override with `spring.security.user.name` / `spring.security.user.password`.
+5. Everything is enforced by the filter chain, before your code runs.
