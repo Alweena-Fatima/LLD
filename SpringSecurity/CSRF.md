@@ -14,22 +14,11 @@ CSRF is an attack where an attacker tricks an **already logged-in** user's brows
 
 **In one line:** the server trusts the browser's cookie, and the attacker abuses that trust.
 
-## 2. Why CSRF is possible
-
-| Cause | Explanation |
-|---|---|
-| Session trust | Apps identify users by cookie or session ID. If the cookie is present, the request is assumed to be from the user. |
-| Automatic cookie sending | The browser attaches cookies to every request to a domain, no matter which site triggered the request. |
-| No request verification | The server does not check that the user intended the request (no token, no origin check). |
-| Cross-site requests allowed | A form or `<img>` on `malicious.com` can send a request to `bank.com`, and the browser still adds `bank.com`'s cookies (unless `SameSite` blocks it). |
-
-> The attacker can **send** a request but normally cannot **read** the response.
-
 ## 3. Example attack (banking)
 
-1. The user logs in to `https://bank.com`, and the browser stores the session cookie.
+1. The user logs in to `https://bank.com`, and You have already authenticated yourself, so your browser has the authentication cookie.
 2. While still logged in, the user visits `https://malicious.com`.
-3. That page silently triggers:
+3. The attacker tries to make your browser send a request to the bank:
 
 ```
 POST https://bank.com/transfer
@@ -148,14 +137,6 @@ http.csrf(csrf -> csrf.disable());
 
 A JWT sent in the `Authorization` header is not attached automatically by the browser, so CSRF is not a concern. If the JWT is stored in a **cookie**, the browser sends it automatically and CSRF protection is needed again.
 
-## 10. User-side precautions
-
-- Log out of sensitive sites when you're not using them.
-- Avoid clicking suspicious links.
-- Keep your browser and software updated.
-- Use reputable security extensions.
-
----
 
 # Part 2: Cross-Site Scripting (XSS)
 
