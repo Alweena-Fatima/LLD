@@ -250,7 +250,7 @@ Spring Security
 1. Use the built-in builder: `User.withUsername("Meow").password(hash).roles("USER").build()`. Note that `.roles("USER")` is stored internally as the authority `ROLE_USER`.
 2. Make your entity implement `UserDetails` directly (shown in the code section below).
 
-## PasswordEncoder, hashing and salt
+## PasswordEncoder, hashing and salt (https://medium.com/@azurebandage00/spring-security-part-4-9991c5c3dc36)
 
 We now have the user's data. The last question: **is the password the user typed correct?** That is the job of `PasswordEncoder`.
 
