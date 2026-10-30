@@ -71,6 +71,173 @@ Why the new way is better: it is more flexible, easier to test, and lets you def
 
 ---
 
+## Anatomy of a SecurityFilterChain Configuration
+
+Let's break a typical configuration into its parts and see what each one does.
+
+```java
+@Configuration                                              // (1)
+@EnableWebSecurity                                          // (2)
+public class SecurityConfig {
+
+    @Bean                                                   // (3)
+    public SecurityFilterChain securityFilterChain(         // (4)
+            HttpSecurity http) throws Exception {           // (5)
+
+        http                                                // (6)
+            .authorizeHttpRequests(auth -> auth             // (7)
+                .requestMatchers("/admin/**").hasRole("ADMIN")
+                .anyRequest().authenticated()
+            )
+            .formLogin(Customizer.withDefaults())           // (8)
+            .httpBasic(Customizer.withDefaults())
+            .csrf(csrf -> csrf.disable())                   // (9)
+            .sessionManagement(sm -> sm                     // (10)
+                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            );
+
+        return http.build();                                // (11)
+    }
+}
+```
+
+### The outer shell (1 to 5)
+
+| # | Part | Meaning |
+|---|---|---|
+| 1 | `@Configuration` | Tells Spring this class declares beans |
+| 2 | `@EnableWebSecurity` | Turns on Spring Security's web support and lets our config replace the default one |
+| 3 | `@Bean` | Registers the returned object in the Spring container, so Spring Security picks it up |
+| 4 | `SecurityFilterChain` (return type) | The object we are producing: an ordered list of filters |
+| 5 | `HttpSecurity http` | A builder, injected by Spring, used to describe which filters we want. `throws Exception` is needed because the builder methods can throw |
+
+### The builder chain (6 to 10)
+
+`http` is a **builder**. Every method call adds or configures one or more filters:
+
+```
+http.authorizeHttpRequests(...)   → configures AuthorizationFilter
+http.formLogin(...)               → adds UsernamePasswordAuthenticationFilter (+ login page filters)
+http.httpBasic(...)               → adds BasicAuthenticationFilter
+http.csrf(...)                    → adds / removes CsrfFilter
+http.sessionManagement(...)       → configures SessionManagementFilter
+http.logout(...)                  → configures LogoutFilter
+http.cors(...)                    → adds CorsFilter
+```
+
+Each method takes a **lambda** (`Customizer`). The lambda gives you a configurer object for that feature:
+
+```java
+.csrf(csrf -> csrf.disable())
+//     ↑ parameter name   ↑ configure that feature using the object
+```
+
+If you want the defaults for a feature, pass `Customizer.withDefaults()`:
+
+```java
+.formLogin(Customizer.withDefaults())   // default login page, default behaviour
+```
+
+### 7. Authorization rules in detail
+
+```java
+.authorizeHttpRequests(auth -> auth
+    .requestMatchers("/public/**").permitAll()
+    .requestMatchers("/admin/**").hasRole("ADMIN")
+    .anyRequest().authenticated()
+)
+```
+
+Each rule has two halves:
+
+```
+ requestMatchers("/admin/**")   .hasRole("ADMIN")
+ └──── WHICH requests? ────┘    └─── WHO is allowed? ───┘
+```
+
+- `requestMatchers(...)` picks requests by URL pattern (and optionally HTTP method, e.g. `HttpMethod.GET`).
+- The second half is the access rule: `permitAll()`, `authenticated()`, `hasRole()`, `hasAnyRole()`, `hasAuthority()`, `denyAll()`.
+- `anyRequest()` is the catch-all and **must be last**.
+- Rules are checked top to bottom and the **first match wins**.
+
+Wrong order (the specific rule is never reached):
+
+```java
+.anyRequest().authenticated()
+.requestMatchers("/public/**").permitAll()   // never applied, and Spring will actually reject this config
+```
+
+### 8. Authentication mechanisms
+
+```java
+.formLogin(Customizer.withDefaults())   // HTML form, session based
+.httpBasic(Customizer.withDefaults())   // Authorization: Basic header
+```
+
+You can enable more than one. Spring Security tries each filter in order until one authenticates the request.
+
+### 9. CSRF
+
+```java
+.csrf(csrf -> csrf.disable())
+```
+
+CSRF protection is **on by default**. Disable it only for stateless APIs that don't use cookies or sessions. For form based web apps, leave it on.
+
+### 10. Session management
+
+```java
+.sessionManagement(sm -> sm
+    .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+```
+
+| Policy | Behaviour |
+|---|---|
+| `ALWAYS` | Always create a session |
+| `IF_REQUIRED` | Create one only when needed (default) |
+| `NEVER` | Never create one, but use one if it exists |
+| `STATELESS` | Never create or use a session (REST/JWT) |
+
+### 11. `http.build()`
+
+```java
+return http.build();
+```
+
+This is the step that turns all the configuration into the final ordered `SecurityFilterChain`. **Forgetting it or not returning it means no chain is registered.**
+
+### Putting it together: what happens to a request
+
+```
+GET /admin/users   (not logged in)
+        ↓
+SecurityContextHolderFilter     → no context found, empty one set
+        ↓
+CsrfFilter                      → GET, so no token check (or disabled)
+        ↓
+BasicAuthenticationFilter       → no Authorization header, skip
+        ↓
+AnonymousAuthenticationFilter   → sets anonymous user
+        ↓
+AuthorizationFilter             → rule: /admin/** needs ROLE_ADMIN → DENY
+        ↓
+ExceptionTranslationFilter      → not authenticated → entry point
+        ↓
+401 response (or redirect to /login)
+```
+
+```
+GET /admin/users   (logged in as ADMIN)
+        ↓
+... filters load the authenticated user ...
+        ↓
+AuthorizationFilter             → ROLE_ADMIN present → ALLOW
+        ↓
+Controller → 200 OK
+```
+
+---
+
 ## Step 2: Create a Security Configuration Class
 
 ```java
@@ -405,199 +572,4 @@ http
 
     .addFilterAt(myCustomFilter, BasicAuthenticationFilter.class);
     // takes the SAME position as the given filter. Use for: replacing a built-in filter
-```
-
-### Example: custom JWT filter
-
-```java
-@Component
-public class JwtAuthenticationFilter extends OncePerRequestFilter {
-
-    private final JwtService jwtService;
-    private final UserDetailsService userDetailsService;
-
-    public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService) {
-        this.jwtService = jwtService;
-        this.userDetailsService = userDetailsService;
-    }
-
-    @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain filterChain) throws ServletException, IOException {
-
-        String authHeader = request.getHeader("Authorization");
-
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            filterChain.doFilter(request, response);   // no JWT, pass through
-            return;
-        }
-
-        String token = authHeader.substring(7);
-        String username = jwtService.extractUsername(token);
-
-        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-
-            if (jwtService.isTokenValid(token, userDetails)) {
-                UsernamePasswordAuthenticationToken authToken =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails, null, userDetails.getAuthorities());
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
-            }
-        }
-
-        filterChain.doFilter(request, response);
-    }
-}
-```
-
-Register it:
-
-```java
-http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
-```
-
-> `OncePerRequestFilter` guarantees the filter runs exactly once per request, even with async or error dispatches.
-
----
-
-## Multiple SecurityFilterChains
-
-Different URL patterns can have completely different security setups.
-
-```java
-@Configuration
-@EnableWebSecurity
-public class SecurityConfig {
-
-    // Chain 1: REST API (stateless, JWT)
-    @Bean
-    @Order(1)
-    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
-        http
-            .securityMatcher("/api/**")      // only applies to /api/**
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(session ->
-                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/**").permitAll()
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
-        return http.build();
-    }
-
-    // Chain 2: Web UI (stateful, form login)
-    @Bean
-    @Order(2)
-    public SecurityFilterChain webSecurityFilterChain(HttpSecurity http) throws Exception {
-        http
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/public/**", "/login").permitAll()
-                .anyRequest().authenticated()
-            )
-            .formLogin(Customizer.withDefaults());
-        return http.build();
-    }
-}
-```
-
-How requests are routed:
-
-```
-GET /api/products     → matches Chain 1 (JWT, stateless)
-GET /admin/dashboard  → does not match /api/**, falls to Chain 2 (form login)
-```
-
-- `@Order` decides which chain is checked first (lower number = first).
-- `securityMatcher()` restricts which requests a chain applies to.
-- The chain without a `securityMatcher` should have the **highest** order number, since it matches everything.
-
----
-
-## Debugging the Filter Chain
-
-### Enable TRACE logging
-
-```yaml
-logging:
-  level:
-    org.springframework.security: TRACE
-```
-
-Sample output:
-
-```
-TRACE FilterChainProxy                - Securing GET /api/products
-TRACE SecurityContextHolderFilter     - Set SecurityContextHolder to empty SecurityContext
-TRACE AnonymousAuthenticationFilter   - Set SecurityContextHolder to anonymous SecurityContext
-TRACE AuthorizationFilter             - Authorized filter invocation [GET /api/products]
-```
-
-### Print the active filters
-
-```java
-@Component
-public class FilterChainDiagnostics implements ApplicationRunner {
-
-    @Autowired
-    private FilterChainProxy filterChainProxy;
-
-    @Override
-    public void run(ApplicationArguments args) {
-        filterChainProxy.getFilterChains().forEach(chain -> {
-            System.out.println("Chain: " + chain);
-            chain.getFilters().forEach(f ->
-                System.out.println("  → " + f.getClass().getSimpleName()));
-        });
-    }
-}
-```
-
-Sample output:
-
-```
-  → DisableEncodeUrlFilter
-  → WebAsyncManagerIntegrationFilter
-  → SecurityContextHolderFilter
-  → HeaderWriterFilter
-  → CorsFilter
-  → CsrfFilter
-  → LogoutFilter
-  → JwtAuthenticationFilter          ← your custom filter
-  → UsernamePasswordAuthenticationFilter
-  → AnonymousAuthenticationFilter
-  → ExceptionTranslationFilter
-  → AuthorizationFilter
-```
-
----
-
-## Customization Tips
-
-- **Custom authentication logic:** create and register an `AuthenticationProvider` bean.
-- **In-memory users:** fine for demos or simple APIs where you don't want a database. Use a database-backed `UserDetailsService` in real applications.
-- **Password encoding:** always use a proper `PasswordEncoder` (for example `BCryptPasswordEncoder`).
-- **CSRF:** disable it only for stateless APIs. For web apps with forms, keep it enabled.
-- **CORS:** `.cors(cors -> cors.configurationSource(corsConfigurationSource()))`
-- **OAuth2 / OIDC:** `.oauth2Login(oauth -> oauth.defaultSuccessUrl("/home"))`
-
----
-
-## Quick Summary
-
-- `SecurityFilterChain` replaces `WebSecurityConfigurerAdapter`.
-- It is an **ordered list of servlet filters**, each handling one security concern.
-- Configure it with a `@Bean` method that takes `HttpSecurity` and **always returns `http.build()`**.
-- Main building blocks: `authorizeHttpRequests`, `formLogin` / `httpBasic`, `csrf`, `sessionManagement`, `logout`, `exceptionHandling`.
-- Add custom filters with `addFilterBefore()`, `addFilterAfter()` or `addFilterAt()`, extending `OncePerRequestFilter`.
-- Use multiple chains with `@Order` and `securityMatcher()` for different parts of the app (API vs web UI).
-- Debug with TRACE logging or by inspecting `FilterChainProxy`.
-
-```
-Request → [Security Filters] → Authorized? → Controller
-                  ↓ no
-            401 / 403 response
 ```
