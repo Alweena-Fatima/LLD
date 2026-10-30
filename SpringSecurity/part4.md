@@ -1,4 +1,4 @@
-# Spring Security Authentication
+# Spring Security Authentication (https://blog.devops-monk.com/tutorials/spring-security/authentication-manager-provider/)
 
 Authentication answers one question: **"Who is this user, and can we trust them?"** Spring Security answers it by passing a login request through a fixed set of components, each with one small job.
 
@@ -101,10 +101,16 @@ Authentication request =
 **Its one important method:**
 
 ```java
-Authentication authenticate(Authentication authentication)
+public interface AuthenticationManager {
+
+    Authentication authenticate(Authentication authentication) throws AuthenticationException;
+
+}
+
 ```
 
-In words: "Give me an unverified Authentication; I return a verified one, or throw an exception."
+Input: an unauthenticated Authentication (e.g., UsernamePasswordAuthenticationToken with username and plaintext password). 
+Output: an authenticated Authentication (same type, but with isAuthenticated() = true and populated authorities), or an AuthenticationException if authentication fails.
 
 **ProviderManager** is the main implementation of this interface. The ProviderManager holds a list of AuthenticationProviders and loops through each one until authentication is successful or all have been tried.
 
@@ -115,6 +121,17 @@ In words: "Give me an unverified Authentication; I return a verified one, or thr
 5. If not, try the next provider. If none succeed, throw an `AuthenticationException`.
 
 **Example:**
+
+```java
+// ProviderManager selects providers by type
+
+public boolean supports(Class<?> authentication) {
+
+    return UsernamePasswordAuthenticationToken.class.isAssignableFrom(authentication);
+
+}
+
+```
 
 ```text
 Request: UsernamePasswordAuthenticationToken(Meow, hello123)
@@ -136,19 +153,18 @@ An `AuthenticationProvider` does the **actual authentication work** for one type
 | `supports(Class<?>)` | Tell the ProviderManager whether this provider handles this kind of request |
 
 **Several providers can exist side by side:**
+```java
+public interface AuthenticationProvider {
 
-```text
-                 AuthenticationManager (ProviderManager)
-                            |
-               +------------+------------+
-               |                         |
-   DaoAuthenticationProvider      OtpAuthenticationProvider
-   (username + password)          (one-time code)
-               |                         |
-      UserDetailsService          OTP verification
-               |
-           Database
+    Authentication authenticate(Authentication authentication) throws AuthenticationException;
+
+    boolean supports(Class<?> authentication); // which token types can this handle?
+
+}
+
 ```
+<img width="1122" height="383" alt="image" src="https://github.com/user-attachments/assets/b4a86c7a-277c-464d-bd2b-8fc699d6f71a" />
+
 
 **Example:** Meow logs in with a password, so the Dao provider handles it. Tom logs in with an OTP code, so the OTP provider handles it. Same manager, different providers.
 
