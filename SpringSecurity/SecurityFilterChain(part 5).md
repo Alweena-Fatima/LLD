@@ -1,4 +1,4 @@
-# Configuring SecurityFilterChain
+# Configuring SecurityFilterChain (https://medium.com/@yasiffkhan/understanding-securityfilterchain-configuration-1498cd017205)
 
 ## Introduction
 
